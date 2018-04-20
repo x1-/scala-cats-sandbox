@@ -60,7 +60,7 @@ object MonoidInstances {
 
 object SuperAdder {
   import cats.Monoid
-  import cats.instances.boolean._
+//  import cats.instances.boolean._
   import cats.instances.int._
   import cats.instances.option._
   import cats.syntax.semigroup._
