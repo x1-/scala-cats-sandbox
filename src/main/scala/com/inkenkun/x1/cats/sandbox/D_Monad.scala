@@ -324,7 +324,7 @@ object ReaderMonad {
   def main(args: Array[String]): Unit = {
     import cats.data.Reader
 
-    case class Cat(name: String, favoriteFood: String)
+    case class Cat (name: String, favoriteFood: String)
     // defined class Cat
 
     val catName: Reader[Cat, String] =
@@ -342,7 +342,7 @@ object ReaderMonad {
     val greetAndFeed: Reader[Cat, String] =
       for {
         greet <- greetKitty
-        feed  <- feedKitty
+        feed <- feedKitty
       } yield s"$greet. $feed."
 
     greetAndFeed(Cat("Garfield", "lasagne"))
@@ -354,29 +354,243 @@ object ReaderMonad {
     /**
       * “4.8.3 Exercise: Hacking on Readers
       */
-    case class Db(
+    case class Db (
       usernames: Map[Int, String],
       passwords: Map[String, String]
     )
 
     type DbReader[A] = Reader[Db, A]
 
-    def findUsername(userId: Int): DbReader[Option[String]] =
+    def findUsername (userId: Int): DbReader[Option[String]] =
       Reader(db => db.usernames.get(userId))
 
-    def checkPassword(
+    def checkPassword (
       username: String,
       password: String): DbReader[Boolean] =
       Reader(db => db.passwords.get(username).contains(password))
 
+    def checkLogin (
+      userId: Int,
+      password: String): DbReader[Boolean] =
+      findUsername(userId).flatMap { maybeUser =>
+        maybeUser.map { user =>
+          checkPassword(user, password)
+        }.getOrElse(Reader.apply(_ => false))
+      }
+
+    /*
+    resolve:
+    import cats.syntax.applicative._
     def checkLogin(
       userId: Int,
       password: String): DbReader[Boolean] =
-      ???
-    //    val validList = valid.run(Db(
-//      Map(1 -> "apple", 2 -> "banana", 3 -> "grape", 4 -> "kiwi"),
-//      Map("apple" -> "sider", "banana" -> "milk", "kiwi" -> "juce", "peach" -> "nector")
-//    ))
-//    validList.foreach(println(_))
+      for {
+        username   <- findUsername(userId)
+        passwordOk <- username.map { username =>
+                        checkPassword(username, password)
+                      }.getOrElse {
+                        false.pure[DbReader]
+                      }
+      } yield passwordOk
+      */
+
+    val users = Map(
+      1 -> "dade",
+      2 -> "kate",
+      3 -> "margo"
+    )
+
+    val passwords = Map(
+      "dade" -> "zerocool",
+      "kate" -> "acidburn",
+      "margo" -> "secret"
+    )
+
+    val db = Db(users, passwords)
+
+    val res10 = checkLogin(1, "zerocool").run(db)
+    // res10: cats.Id[Boolean] = true
+    println(s"res10: $res10")
+
+    val res11 = checkLogin(4, "davinci").run(db)
+    // res11: cats.Id[Boolean] = false
+    println(s"res11: $res11")
+  }
+}
+
+/**
+  * 4.9 The State Monad
+  */
+object StateMonad {
+  def main(args: Array[String]): Unit = {
+    import cats.data.State
+
+    val a = State[Int, String]{ state =>
+      (state, s"The state is $state")
+    }
+    println(a.run(0).value)
+
+    // Get the state and the result:
+    val (state, result) = a.run(10).value
+    // state: Int = 10
+    // result: String = The state is 10
+
+    // Get the state, ignore the result:
+    val state1 = a.runS(10).value
+    // state: Int = 10
+
+    // Get the result, ignore the state:
+    val result2 = a.runA(10).value
+    // result: String = The state is 10
+
+    val step1 = State[Int, String] { num =>
+      val ans = num + 1
+      (ans, s"Result of step1: $ans")
+    }
+    val step2 = State[Int, String] { num =>
+      val ans = num * 2
+      (ans, s"Result of step2: $ans")
+    }
+    // step2: cats.data.State[Int,String] = cats.data.IndexedStateT@6be37458
+
+    val both = for {
+      a <- step1
+      b <- step2
+    } yield (a, b)
+    // both: cats.data.IndexedStateT[cats.Eval,Int,Int,(String, String)] = cats.data.IndexedStateT@250c2c22
+
+    val (state3, result3) = both.run(20).value
+    // state3: Int = 42
+    // result: (String, String) = (Result of step1: 21,Result of step2: 42)
+
+    val getDemo = State.get[Int]
+    // getDemo: cats.data.State[Int,Int] = cats.data.IndexedStateT@280446c5
+
+    getDemo.run(10).value
+    // res3: (Int, Int) = (10,10)
+
+    val setDemo = State.set[Int](30)
+    // setDemo: cats.data.State[Int,Unit] = cats.data.IndexedStateT@678380eb
+
+    setDemo.run(10).value
+    // res4: (Int, Unit) = (30,())
+
+    val pureDemo = State.pure[Int, String]("Result")
+    // pureDemo: cats.data.State[Int,String] = cats.data.IndexedStateT@2364f0fb
+
+    pureDemo.run(10).value
+    // res5: (Int, String) = (10,Result)
+
+    val inspectDemo = State.inspect[Int, String](_ + "!")
+    // inspectDemo: cats.data.State[Int,String] = cats.data.IndexedStateT@3502f4f3
+
+    inspectDemo.run(10).value
+    // res6: (Int, String) = (10,10!)
+
+    val modifyDemo = State.modify[Int](_ + 1)
+    // modifyDemo: cats.data.State[Int,Unit] = cats.data.IndexedStateT@6acdb6ef
+
+    modifyDemo.run(10).value
+    // res7: (Int, Unit) = (11,())
+
+    import State._
+
+    val program: State[Int, (Int, Int, Int)] = for {
+      a <- get[Int]
+      _ <- set[Int](a + 1)
+      b <- get[Int]
+      _ <- modify[Int](_ + 1)
+      c <- inspect[Int, Int](_ * 1000)
+    } yield (a, b, c)
+    // program: cats.data.State[Int,(Int, Int, Int)] = cats.data.IndexedStateT@3b51107e
+
+    val (state4, result4) = program.run(1).value
+    // state4: Int = 3
+    // result4: (Int, Int, Int) = (1,2,3000)
+    println(s"state4: $state4, result4: $result4")
+
+    /**
+      * 4.9.3 Exercise: Post-Order Calculator
+      */
+    import cats.data.State
+    import scala.util.matching.Regex
+
+    type CalcState[A] = State[List[Int], A]
+
+    def evalOne(sym: String): CalcState[Int] = State[List[Int], Int] { oldStack =>
+      val newStack = someTransformation(sym, oldStack)
+      val result   = newStack.head
+      (newStack, result)
+    }
+    def someTransformation(sym: String, oldStack: List[Int]): List[Int] = {
+      if (sym.matches("""^\d+$""")) sym.toInt :: oldStack
+      else {
+        oldStack match {
+          case h :: h2 :: tail if sym == "+" => (h2 + h) :: tail
+          case h :: h2 :: tail if sym == "-" => (h2 - h) :: tail
+          case h :: h2 :: tail if sym == "*" => (h2 * h) :: tail
+          case h :: h2 :: tail if sym == "/" => (h2 / h) :: tail
+          case op => throw new IllegalArgumentException(s"Unknown operation: $op.")
+        }
+      }
+    }
+    println(evalOne("42").runA(Nil).value)
+    val prog = for {
+      _   <- evalOne("1")
+      _   <- evalOne("2")
+      ans <- evalOne("+")
+    } yield ans
+    println(s"program: ${prog.runA(Nil).value}")
+
+    /*
+    resolve:
+    def evalOne(sym: String): CalcState[Int] =
+      sym match {
+        case "+" => operator(_ + _)
+        case "-" => operator(_ - _)
+        case "*" => operator(_ * _)
+        case "/" => operator(_ / _)
+        case num => operand(num.toInt)
+      }
+    def operand(num: Int): CalcState[Int] =
+      State[List[Int], Int] { stack =>
+        (num :: stack, num)
+      }
+    def operator(func: (Int, Int) => Int): CalcState[Int] =
+      State[List[Int], Int] {
+        case a :: b :: tail =>
+          val ans = func(a, b)
+          (ans :: tail, ans)
+        case _ =>
+          sys.error("Fail!")
+      }
+
+    */
+    def evalAll(input: List[String]): CalcState[Int] = {
+      input.foldLeft(State.pure[List[Int], Int](0)){ (state: State[List[Int], Int], s: String) =>
+        state.flatMap(_ => evalOne(s))
+      }
+    }
+
+    val program3 = evalAll(List("1", "2", "+", "3", "*"))
+    // program: CalcState[Int] = cats.data.IndexedStateT@2e788ab0
+
+    println(program3.runA(Nil).value)
+    // res6: Int = 9
+
+    val program4 = for {
+      _   <- evalAll(List("1", "2", "+"))
+      _   <- evalAll(List("3", "4", "+"))
+      ans <- evalOne("*")
+    } yield ans
+    // program: cats.data.IndexedStateT[cats.Eval,List[Int],List[Int],Int] = cats.data.IndexedStateT@55072a57
+
+    println(program4.runA(Nil).value)
+    // res7: Int = 21
+
+    def evalInput(input: String): Int =
+      evalAll(input.split(" ").toList).runA(Nil).value
+
+    println(evalInput("1 2 + 3 4 + *"))
   }
 }
