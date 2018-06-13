@@ -496,11 +496,11 @@ object StateMonad {
     import State._
 
     val program: State[Int, (Int, Int, Int)] = for {
-      a <- get[Int]
-      _ <- set[Int](a + 1)
-      b <- get[Int]
-      _ <- modify[Int](_ + 1)
-      c <- inspect[Int, Int](_ * 1000)
+      a <- get[Int]   // (state1, state1) <- (state1, result1)
+      _ <- set[Int](a + 1)  // (a + 1, ()) <- (state1, state1)
+      b <- get[Int]   // (a + 1, a + 1) <- (a + 1, ())
+      _ <- modify[Int](_ + 1) // (a + 1 + 1, ()) <- (a + 1, a + 1)
+      c <- inspect[Int, Int](_ * 1000)  // (a + 1 + 1, (a + 1 + 1) * 1000) <- (a + 1 + 1, ())
     } yield (a, b, c)
     // program: cats.data.State[Int,(Int, Int, Int)] = cats.data.IndexedStateT@3b51107e
 
@@ -592,5 +592,68 @@ object StateMonad {
       evalAll(input.split(" ").toList).runA(Nil).value
 
     println(evalInput("1 2 + 3 4 + *"))
+  }
+}
+
+/**
+  * 4.10 Defining Custom Monads
+  */
+object CustomMonad {
+
+  import cats.Monad
+  import cats.syntax.either._
+
+  sealed trait Tree[+A]
+
+  final case class Branch[A](left: Tree[A], right: Tree[A])
+    extends Tree[A]
+
+  final case class Leaf[A](value: A) extends Tree[A]
+
+  def branch[A](left: Tree[A], right: Tree[A]): Tree[A] =
+    Branch(left, right)
+
+  def leaf[A](value: A): Tree[A] =
+    Leaf(value)
+
+  val treeMonad = new Monad[Tree] {
+    override def flatMap[A, B](fa: Tree[A])(f: (A) => Tree[B]): Tree[B] = fa match {
+      case Leaf(a) => f(a)
+      case Branch(Leaf(l), Leaf(r)) => Branch(f(l), f(r))
+      case Branch(l, Leaf(r)) => Branch(flatMap(l)(f), f(r))
+      case Branch(Leaf(l), r) => Branch(f(l), flatMap(r)(f))
+      case Branch(l, r) => Branch(flatMap(l)(f), flatMap(r)(f))
+    }
+    /*
+    resolve:
+    def flatMap[A, B](tree: Tree[A])
+       (func: A => Tree[B]): Tree[B] =
+      tree match {
+        case Branch(l, r) =>
+          Branch(flatMap(l)(func), flatMap(r)(func))
+        case Leaf(value)  =>
+          func(value)
+    }
+     */
+
+    override def tailRecM[A, B](a: A)(f: (A) => Tree[Either[A, B]]): Tree[B] = f(a) match {
+      case Leaf(Right(r)) => Leaf(r)
+      case Leaf(Left(l)) => tailRecM(l)(f)
+      case Branch(l, r) => Branch(
+        flatMap(l) {
+          case Left(l1) => tailRecM(l1)(f)
+          case Right(r1) => pure(r1)
+        },
+        flatMap(r) {
+          case Left(l1) => tailRecM(l1)(f)
+          case Right(r1) => pure(r1)
+        }
+      )
+    }
+
+    override def pure[A](x: A): Tree[A] = leaf(x)
+  }
+
+  def main(args: Array[String]): Unit = {
   }
 }
