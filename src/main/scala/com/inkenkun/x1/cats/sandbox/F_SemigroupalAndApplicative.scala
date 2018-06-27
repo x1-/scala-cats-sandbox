@@ -1,5 +1,7 @@
 package com.inkenkun.x1.cats.sandbox
 
+import java.io
+
 /**
  * 6.1 Semigroupal
  */
@@ -248,10 +250,82 @@ object SemigroupalApplySyntaxSection {
 
     "fail".invalid[Int].fold(_ + "!!!", _.toString)
     // res27: String = fail!!!
+  }
+}
 
+/**
+ * “6.4.4 Exercise: Form Validation
+ */
+object SemigroupalExercise {
+  import cats.Semigroupal
+  import cats.data.Validated
+  import cats.instances.list._
+  import cats.syntax.either._
+  import cats.syntax.validated._
 
-    /**
-     * “6.4.4 Exercise: Form Validation
-     */
+  type AllErrorsOr[A] = Validated[List[String], A]
+  type ErrorOr[A] = Either[List[String], A]
+
+  case class User(name: String, age: Int)
+  def getValue(params: Map[String, String], key: String): ErrorOr[String] =
+    params
+      .get(key)
+      .toRight(List(s"$key was not found."))
+
+  def parseInt(value: String): ErrorOr[Int] =
+    Either.catchOnly[NumberFormatException](value.toInt)
+      .leftMap(e => List(s"Cannot parse $value to Int.: ${e.getMessage}"))
+
+  def nonBlank(value: String): ErrorOr[String] =
+    value
+      .valid[List[String]]
+      .ensure(List("name is blank."))(_.nonEmpty)
+      .toEither
+
+  def nonNegative(value: Int): ErrorOr[Int] =
+    value
+      .valid[List[String]]
+      .ensure(List(s"$value is negative value."))(_ >= 0)
+      .toEither
+
+  def readName(params: Map[String, String]): ErrorOr[String] =
+    getValue(params, "name")
+      .flatMap(nonBlank)
+
+  def readAge(params: Map[String, String]): ErrorOr[Int] =
+    getValue(params, "age")
+      .flatMap(nonBlank)
+      .flatMap(parseInt)
+      .flatMap(nonNegative)
+
+  def productUser(params: Map[String, String]): Validated[List[String], User] =
+    Semigroupal[AllErrorsOr].product(
+      readName(params).toValidated,
+      readAge(params).toValidated
+    ).map { case (name, age) => User(name, age) }
+
+  def main(args: Array[String]): Unit = {
+    val params1 = Map(
+      "name" -> "Garfield",
+      "age"  -> "-10"
+    )
+    println(productUser(params1))
+
+    val params2 = Map(
+      "age"  -> "10"
+    )
+    println(productUser(params2))
+
+    val params3 = Map(
+      "name" -> "Lasagne",
+      "age"  -> "seven"
+    )
+    println(productUser(params3))
+
+    val params4 = Map(
+      "name" -> "",
+      "age"  -> "-10"
+    )
+    println(productUser(params4))
   }
 }
