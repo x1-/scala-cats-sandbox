@@ -47,7 +47,7 @@ object I_MapReduce {
       }
       .sequence[Future, B]
       .map { xs: List[B] =>
-        xs.foldLeft(Monoid[B].empty)(_ |+| _)
+        Monoid[B].combineAll(xs)
       }
   }
 
@@ -71,7 +71,7 @@ object I_MapReduce {
 
     Traverse[List]
       .sequence[Future, B](mapped.toList)
-      .map(xs => xs.foldLeft(Monoid[B].empty)(_ |+| _))
+      .map(xs => Monoid[B].combineAll(xs))
   }
 
   /**
