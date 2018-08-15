@@ -54,6 +54,43 @@ object J_DataValidation {
   }
 }
 
+object J_DataValidation2 {
+
+  /**
+   * 10.3 Basic Combinators
+   */
+  import cats.Semigroup
+  import cats.data.Validated
+  import cats.instances.list._
+  import cats.syntax.either._
+  import cats.syntax.semigroup._
+  import cats.syntax.validated._
+
+  sealed trait Check[E, A] {
+    def and(that: Check[E, A]): Check[E, A] =
+      And(this, that)
+
+    def apply(a: A)(implicit s: Semigroup[E]): Either[E, A] =
+      this match {
+        case Pure(f) => f(a)
+        case And(l, r) =>
+          (l(a), r(a)) match {
+            case (Right(a1),  Right(a2)) => a.asRight
+            case (Left(e1),  Left(e2)) => (e1 |+| e2).asLeft
+            case (_,  Left(e)) => e.asLeft
+            case (Left(e),  _) => e.asLeft
+          }
+      }
+  }
+  final case class And[E, A](
+    left: Check[E, A],
+    right: Check[E, A]) extends Check[E, A]
+
+  final case class Pure[E, A](
+    func: A => Either[E, A]) extends Check[E, A]
+
+}
+
 object MakeSenseOfPredicates {
   /**
    * 10.4.1 Predicates
@@ -363,5 +400,147 @@ object Kleislis {
     val pipeline = step1 andThen step2 andThen step3
 
     println(pipeline.run(20))
+  }
+}
+
+object CheckWithKleisli {
+  import cats.data.Kleisli
+  import cats.instances.list._ // for Monad
+
+  import cats.Semigroup
+  import cats.data.Validated
+  import cats.data.Validated._   // for Valid and Invalid
+  import cats.syntax.semigroup._ // for |+|
+  import cats.syntax.apply._     // for mapN
+  import cats.syntax.either._
+  import cats.syntax.validated._
+
+  import cats.instances.either._
+  import cats.syntax.functor._
+
+  import cats.data.NonEmptyList
+
+  type Errors      = NonEmptyList[String]
+  type Result[A]   = Either[Errors, A]
+  type Check[A, B] = Kleisli[Result, A, B]
+
+  sealed trait Predicate[E, A] {
+    import Predicate._
+
+    def run(implicit s: Semigroup[E]): A => Either[E, A] =
+      (a: A) => this(a).toEither
+
+    def and(that: Predicate[E, A]): Predicate[E, A] =
+      And(this, that)
+
+    def or(that: Predicate[E, A]): Predicate[E, A] =
+      Or(this, that)
+
+    def apply(a: A)(implicit s: Semigroup[E]): Validated[E, A] =
+      this match {
+        case Pure(func) =>
+          func(a)
+
+        case And(left, right) =>
+          (left(a), right(a)).mapN((_, _) => a)
+
+        case Or(left, right) =>
+          left(a) match {
+            case Valid(a1)   => Valid(a)
+            case Invalid(e1) =>
+              right(a) match {
+                case Valid(a2)   => Valid(a)
+                case Invalid(e2) => Invalid(e1 |+| e2)
+              }
+          }
+      }
+  }
+
+  object Predicate {
+    final case class And[E, A](
+      left: Predicate[E, A],
+      right: Predicate[E, A]) extends Predicate[E, A]
+
+    final case class Or[E, A](
+      left: Predicate[E, A],
+      right: Predicate[E, A]) extends Predicate[E, A]
+
+    final case class Pure[E, A](
+      func: A => Validated[E, A]) extends Predicate[E, A]
+
+    def apply[E, A](f: A => Validated[E, A]): Predicate[E, A] =
+      Pure(f)
+
+    def lift[E, A](err: E, fn: A => Boolean): Predicate[E, A] =
+      Pure(a => if(fn(a)) a.valid else err.invalid)
+  }
+
+
+  def check[A, B](func: A => Result[B]): Check[A, B] =
+    Kleisli(func)
+
+  def checkPred[A](pred: Predicate[Errors, A]): Check[A, A] =
+    Kleisli[Result, A, A](pred.run)
+
+  def error(s: String): NonEmptyList[String] =
+    NonEmptyList(s, Nil)
+
+  def longerThan(n: Int): Predicate[Errors, String] =
+    Predicate.lift(
+      error(s"Must be longer than $n characters"),
+      str => str.size > n)
+
+  val alphanumeric: Predicate[Errors, String] =
+    Predicate.lift(
+      error(s"Must be all alphanumeric characters"),
+      str => str.forall(_.isLetterOrDigit))
+
+  def contains(char: Char): Predicate[Errors, String] =
+    Predicate.lift(
+      error(s"Must contain the character $char"),
+      str => str.contains(char))
+
+  def containsOnce(char: Char): Predicate[Errors, String] =
+    Predicate.lift(
+      error(s"Must contain the character $char only once"),
+      str => str.filter(c => c == char).size == 1)
+
+  def splitting: Kleisli[Result, String, (String, String)] = {
+    val split: String => Result[(String, String)] = { s =>
+      s.split('@').toList match {
+        case h :: tail if !tail.isEmpty => (h, tail.head).asRight
+        case _ => error("Must contain the character @").asLeft
+      }
+    }
+    Kleisli(s => split(s))
+  }
+  val checkLeft: Kleisli[Result, String, String] =
+    checkPred(longerThan(0))
+
+  val checkRight: Kleisli[Result, String, String] =
+    checkPred(longerThan(3) and contains('.'))
+
+  val joinEmail: Kleisli[Result, (String, String), String] =
+    check { case (l, r) =>
+      (checkLeft(l), checkRight(r)).mapN(_ + "@" + _)
+    }
+
+  val checkUsername: Kleisli[Result, String, String] =
+    checkPred(longerThan(4).and(alphanumeric))
+
+  val checkEmail: Kleisli[Result, String, String] =
+    splitting andThen joinEmail
+
+  final case class User(username: String, email: String)
+  def createUser(
+    username: String,
+    email: String): Result[User] =
+    (checkUsername.run(username), checkEmail.run(email)).mapN(User)
+
+
+
+  def main(args: Array[String]): Unit = {
+    println(createUser("NoelWhite", "noel@underscore.io"))
+    println(createUser("", "dave@underscore@io"))
   }
 }
